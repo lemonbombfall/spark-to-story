@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>场景便签墙</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f5f2ea;color:#283d35;font:15px/1.6 system-ui,sans-serif}header,footer{padding:24px}h1{font:30px Georgia,serif;margin:0 0 10px}h2{font-size:18px;margin:8px 0}button,label.file{font:inherit;padding:7px 12px;border:1px solid #aebfae;background:#fffdf6;color:inherit;border-radius:6px;cursor:pointer}button:hover,button:focus-visible{background:#dcebdc}nav,.choices,.actions{display:flex;gap:8px;flex-wrap:wrap}nav{margin:14px 0}.choices button[aria-pressed=true]{outline:2px solid #397453}.hint,#status{font-size:13px;color:#5d6f61}#status{min-height:24px}main{display:grid;grid-template-columns:minmax(0,1fr) 350px;gap:24px;padding:0 24px 24px}section,aside{min-width:0}.desk-scroll{overflow:auto;max-height:75vh;border:1px solid #ccd5c6;border-radius:10px}#desktop{position:relative;min-width:700px;min-height:740px;background:radial-gradient(#cbd2c5 1px,transparent 1px) 0 0/20px 20px}.card{width:290px;padding:16px;border:1px solid #d2c59a;border-radius:4px;background:#fff5ce;box-shadow:0 4px 10px #18342516;cursor:grab;overflow-wrap:anywhere}.card p{font-size:13px;margin:8px 0}.card h3{margin:0 0 8px;font:22px Georgia,serif}.card.selected{outline:3px solid #397453}#desktop .card{position:absolute}#desktop .card.selected{z-index:10}#timeline{min-height:220px;padding:10px;border:1px dashed #a4b59e;border-radius:10px;background:#e5eadf}#timeline .card{width:100%;position:relative}.slot{width:100%;margin:8px 0;padding:5px;border-style:dashed;background:transparent}.gap{background:#eee2f1}.actions button{font-size:12px;padding:4px 7px}.source{font-size:12px}textarea{width:100%;min-height:88px;padding:10px;font:inherit;border:1px solid #aebfae;border-radius:6px;background:#fffdf7}#handoff{min-height:180px}details{margin-top:12px}footer{font-size:12px}.selection{margin-top:20px}@media(max-width:900px){main{grid-template-columns:minmax(0,1fr);padding:0 14px 20px}header{padding:18px 14px}.desk-scroll{max-height:60vh}aside{width:100%}}
+</style>
+<header><h1 id="project"></h1><p>先摆喜欢的片段，连接可以留空。</p>
+<nav><button id="export">下载布局</button><label class="file">导入布局<input id="import" type="file" accept=".json,application/json" hidden></label><button id="add-gap">添加 GAP</button></nav>
+<p class="hint">卡片叠住了？点下面的名字，把它提到最上面。</p><div id="choices" class="choices" aria-label="选择卡片"></div><div id="status" role="status" aria-live="polite"></div></header>
+<main><section><h2>散乱桌面</h2><p class="hint">自由拖动；也可用卡片按钮移入时间线。桌面可横向、纵向滚动。</p><div class="desk-scroll"><div id="desktop"></div></div></section>
+<aside><h2>Timeline</h2><div id="timeline"></div><h2 class="selection">从哪里继续</h2><p id="selection">尚未选中</p><textarea id="note" aria-label="继续写作的备注" placeholder="留一句想法，也可以空着"></textarea><button id="continue">排好了，继续写</button><details id="handoff-panel"><summary>复制回传内容</summary><p class="hint">将以下内容或下载的布局文件交回对话；助手不会自动收到。</p><textarea id="handoff" readonly aria-label="回传内容"></textarea></details></aside></main>
+<footer>便签只保存摘要和布局，正文仍在原文件里。浏览器会尝试自动保存；下载或复制可备份。</footer>
+<script id="scene-data" type="application/json">__SCENE_DATA__</script>
+<script>
+'use strict';
+const INITIAL=JSON.parse(document.getElementById('scene-data').textContent);
+const KEY='spark-board:'+INITIAL.projectId;
+const $=id=>document.getElementById(id);
+let state=structuredClone(INITIAL),drag=null;
+const status=t=>{$('status').textContent=t;};
+function validate(s){
+ if(!s||s.version!==1||s.project!==INITIAL.project||(s.projectId&&s.projectId!==INITIAL.projectId)||!Array.isArray(s.cards)||!Array.isArray(s.timeline)||typeof s.note!=='string')throw Error('不是本项目的布局');
+ const ids=new Set();for(const c of s.cards){if(!c||typeof c.id!=='string'||ids.has(c.id)||!['scene','gap'].includes(c.kind)||!Number.isFinite(c.x)||!Number.isFinite(c.y))throw Error('卡片数据不完整');ids.add(c.id);}
+ if(new Set(s.timeline).size!==s.timeline.length||s.timeline.some(id=>!ids.has(id))||(s.selected!==null&&!ids.has(s.selected)))throw Error('排列或选择无效');return s;
+}
+function mergeLayout(saved){
+ validate(saved);const byId=new Map(saved.cards.map(c=>[c.id,c]));
+ // Current manuscript summaries win; only user layout comes from cache/import.
+ const cards=INITIAL.cards.filter(c=>c.kind==='scene').map(c=>{const old=byId.get(c.id);return {...c,...(old?{x:Math.max(0,old.x),y:Math.max(0,old.y)}:{})};});
+ const sceneIds=new Set(cards.map(c=>c.id));
+ for(const c of saved.cards)if(c.kind==='gap'&&!sceneIds.has(c.id))cards.push({...c,title:'??? / GAP'});
+ const ids=new Set(cards.map(c=>c.id));return {...INITIAL,cards,timeline:saved.timeline.filter(id=>ids.has(id)),selected:ids.has(saved.selected)?saved.selected:null,note:saved.note};
+}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(state));status('布局已保存到此浏览器。');}catch{status('浏览器无法保存，请下载布局或复制回传内容。');}$('handoff').value=JSON.stringify(state,null,2);}
+function select(id,scroll=false){state.selected=id;save();render();if(scroll)document.querySelector('[data-id="'+CSS.escape(id)+'"]').scrollIntoView({block:'nearest',inline:'nearest'});}
+function move(id,index){const old=state.timeline.indexOf(id);if(old>=0){state.timeline.splice(old,1);if(old<index)index--;}state.timeline.splice(Math.max(0,index),0,id);state.selected=id;save();render();}
+function freeSpot(id){
+ const rects=[...$('desktop').children].filter(e=>e.dataset.id!==id).map(e=>({x:e.offsetLeft,y:e.offsetTop,w:e.offsetWidth,h:e.offsetHeight}));
+ for(let y=24;;y+=32)for(const x of [24,360])if(rects.every(r=>x+306<=r.x||x>=r.x+r.w+16||y+440<=r.y||y>=r.y+r.h+16))return {x,y};
+}
+function toDesk(id,x,y){const c=state.cards.find(c=>c.id===id);const pos=x===undefined?freeSpot(id):{x:Math.max(0,x),y:Math.max(0,y)};state.timeline=state.timeline.filter(v=>v!==id);Object.assign(c,pos);state.selected=id;save();render();}
+function addGap(index=null){const id='gap-'+(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2));const pos=freeSpot(id);state.cards.push({id,kind:'gap',title:'??? / GAP',event:'尚未想好的连接',stop:'留空，由你决定。',...pos});if(index!==null)state.timeline.splice(index,0,id);state.selected=id;save();render();}
+function button(label,fn){const b=document.createElement('button');b.textContent=label;b.onclick=e=>{e.stopPropagation();fn();};return b;}
+function card(c){
+ const el=document.createElement('article');el.className='card'+(c.kind==='gap'?' gap':'')+(state.selected===c.id?' selected':'');el.dataset.id=c.id;el.draggable=true;el.tabIndex=0;el.setAttribute('aria-label',c.title);
+ el.onclick=e=>{if(e.target.closest('button,a'))return;select(c.id);};el.onkeydown=e=>{if(e.target===el&&(e.key==='Enter'||e.key===' ')){e.preventDefault();select(c.id);}};
+ el.ondragstart=e=>{const r=el.getBoundingClientRect();drag={id:c.id,dx:e.clientX-r.left,dy:e.clientY-r.top};e.dataTransfer.setData('text/plain',c.id);e.dataTransfer.effectAllowed='move';};el.ondragend=()=>drag=null;
+ const h=document.createElement('h3');h.textContent=c.title;el.append(h);
+ for(const [label,key] of [['编号','number'],['视角','pov'],['发生','event'],['停在','stop'],['记住','details'],['地点','place'],['时间','time']])if(c[key]){const p=document.createElement('p');p.textContent=label+' · '+c[key];el.append(p);}
+ if(c.kind==='scene'){const a=document.createElement('a');a.className='source';a.textContent=c.source||c.file;a.href=c.sourceUrl||'#';el.append(a);}
+ const actions=document.createElement('div');actions.className='actions';const i=state.timeline.indexOf(c.id);
+ if(i<0)actions.append(button('移入时间线',()=>move(c.id,state.timeline.length)));else actions.append(button('回桌面',()=>toDesk(c.id)),button('上移',()=>move(c.id,Math.max(0,i-1))),button('下移',()=>move(c.id,Math.min(state.timeline.length,i+2))));
+ if(c.kind==='gap')actions.append(button('删除 GAP',()=>{state.timeline=state.timeline.filter(id=>id!==c.id);state.cards=state.cards.filter(v=>v.id!==c.id);if(state.selected===c.id)state.selected=null;save();render();}));el.append(actions);return el;
+}
+function slot(i){const b=button('＋ 在此留 GAP / 拖到这里',()=>addGap(i));b.className='slot';b.dataset.index=i;b.ondragover=e=>e.preventDefault();b.ondrop=e=>{e.preventDefault();e.stopPropagation();if(drag)move(drag.id,i);};return b;}
+function render(){
+ const desk=$('desktop'),timeline=$('timeline'),choices=$('choices');desk.replaceChildren();timeline.replaceChildren();choices.replaceChildren();
+ for(const c of state.cards){const b=button(c.title,()=>select(c.id,true));b.dataset.select=c.id;b.setAttribute('aria-pressed',String(c.id===state.selected));choices.append(b);if(!state.timeline.includes(c.id)){const el=card(c);el.style.left=c.x+'px';el.style.top=c.y+'px';desk.append(el);}}
+ timeline.append(slot(0));state.timeline.forEach((id,i)=>{const el=card(state.cards.find(c=>c.id===id));el.ondragover=e=>e.preventDefault();el.ondrop=e=>{e.preventDefault();e.stopPropagation();if(drag)move(drag.id,i+(e.clientY>el.getBoundingClientRect().top+el.offsetHeight/2?1:0));};timeline.append(el,slot(i+1));});
+ desk.style.width=Math.max(700,...[...desk.children].map(el=>el.offsetLeft+el.offsetWidth+24))+'px';desk.style.height=Math.max(740,...[...desk.children].map(el=>el.offsetTop+el.offsetHeight+32))+'px';
+ $('selection').textContent=state.selected?'已选：'+state.cards.find(c=>c.id===state.selected).title:'尚未选中';$('note').value=state.note;$('handoff').value=JSON.stringify(state,null,2);
+}
+$('desktop').ondragover=e=>e.preventDefault();$('desktop').ondrop=e=>{e.preventDefault();if(drag){const r=$('desktop').getBoundingClientRect();toDesk(drag.id,e.clientX-r.left-drag.dx,e.clientY-r.top-drag.dy);}};
+$('timeline').ondragover=e=>e.preventDefault();$('timeline').ondrop=e=>{e.preventDefault();if(drag)move(drag.id,state.timeline.length);};
+function download(){save();const url=URL.createObjectURL(new Blob([JSON.stringify(state,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='场景布局.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),3000);}
+$('export').onclick=download;$('add-gap').onclick=()=>addGap();$('note').oninput=e=>{state.note=e.target.value;save();};
+$('continue').onclick=()=>{if(!state.selected){status('先选一张场景卡或 GAP。');return;}save();$('handoff-panel').open=true;status('复制下方内容或下载布局，再交回对话；助手尚未收到。');$('handoff').scrollIntoView({block:'nearest'});};
+$('import').onchange=async e=>{try{const f=e.target.files[0];if(!f)return;state=mergeLayout(JSON.parse(await f.text()));save();render();status('已恢复布局；场景摘要以当前文稿版本为准。');}catch(err){status('导入失败：'+err.message);}e.target.value='';};
+$('project').textContent=INITIAL.project;
+try{const cached=localStorage.getItem(KEY);if(cached)state=mergeLayout(JSON.parse(cached));}catch{status('未恢复旧布局；可导入有效的备份文件。');}render();
+</script></html>

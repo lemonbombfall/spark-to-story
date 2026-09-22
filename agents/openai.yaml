@@ -1,0 +1,4 @@
+interface:
+  display_name: "spark-to-story"
+  short_description: "陪你自由写作、回环续写，将已有场景变成便签，由你亲手拖拽编排故事"
+  default_prompt: "请使用 $spark-to-story 陪我写故事，从我当前的片段或状态开始。"
